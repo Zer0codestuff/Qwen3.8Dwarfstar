@@ -66,33 +66,44 @@ nel Mac da 16 GB. Non sono supportati input immagine, audio o video.
 
 ## CLI
 
-Chat interattiva seriale, senza thinking multi-turn:
+I comandi principali sono sessioni seriali con reasoning e riuso esatto della
+KV cache tra i turni. Senza argomenti parte la chat; un testo semplice è una
+domanda one-shot:
 
 ```sh
-./dwarfstar chat --no-mtp
+./dwarfstar                                  # chat con reasoning xhigh
+./dwarfstar "Perché il cielo è blu?"         # domanda one-shot (ask)
+./dwarfstar chat --profile balanced          # profilo intermedio
+./dwarfstar ask --show-thinking "2^10 - 24?" # mostra anche il pensiero
 ```
 
-Il wrapper conta il transcript renderizzato a ogni turno e si ferma prima del
-limite KV. MLX-VLM 0.6.14 non conserva correttamente il reasoning separato nella
-propria chat interattiva e non inoltra MTP; queste combinazioni vengono quindi
-rifiutate esplicitamente. Per reasoning usare `generate`, oppure il server con
-un client che gestisca separatamente il contenuto di ragionamento.
+I profili raccolgono le configurazioni validate sul Mac M4 16 GB:
 
-Generazione singola e modalità seriale esplicita:
+| Profilo | Contesto | KV cache | Thinking | Budget pensiero |
+| --- | ---: | --- | --- | ---: |
+| `deep` (default) | 8.192 | quantizzata 4 bit | xhigh | 3.072 |
+| `balanced` | 4.096 | quantizzata 8 bit | medium | 1.536 |
+| `quick` | 1.024 | bf16 | disabilitato | — |
+
+La quantizzazione della KV cache riguarda solo i 16 layer full-attention su
+64 (il resto è stato ricorrente GatedDeltaNet): è ciò che rende possibile il
+contesto lungo, perché la KV bf16 va in OOM già nel prefill di un prompt da
+3.300 token. Ogni valore è sovrascrivibile (`--ctx-size`, `--kv-bits`,
+`--thinking-budget`, `--reasoning-effort`, `--answer-reserve`, campionamento).
+Il budget di risposta (`answer_reserve`) garantisce che il pensiero non
+consumi l'intero budget di decode prima della risposta visibile.
+
+Nella chat sono disponibili `/clear`, `/stats`, `/effort`, `/thinking`,
+`/help`, `/exit`. Il wrapper conta i token del transcript a ogni turno e
+rifiuta il turno prima di superare il limite KV.
+
+Generazione one-shot tramite il CLI upstream (percorso legacy, utile per gli
+override diagnostici):
 
 ```sh
 ./dwarfstar generate --no-mtp \
   --system "Rispondi in modo preciso e conciso." \
   "Spiega la differenza tra concorrenza e parallelismo."
-```
-
-Reasoning esplicito sul backend seriale:
-
-```sh
-./dwarfstar generate --no-mtp \
-  --thinking enabled \
-  --reasoning-effort medium \
-  "Progetta e verifica un algoritmo di scheduling con dipendenze."
 ```
 
 `--mtp` è un override diagnostico. Sul Mac M4 16 GB di questa validazione è
@@ -112,7 +123,7 @@ Le modalità MTP sono:
 I target Make accettano opzioni aggiuntive senza modificare il Makefile:
 
 ```sh
-make qwen-chat QWEN_CHAT_ARGS='--no-mtp --ctx-size 2048'
+make qwen-chat QWEN_CHAT_ARGS='--profile balanced'
 make qwen-bench QWEN_BENCH_ARGS='--mode both --max-tokens 64 --repeats 2'
 ```
 
@@ -181,6 +192,9 @@ Risultato misurato il 18 agosto 2026 sul Mac M4 16 GB di destinazione:
 | Range decode | 6,47–7,36 tok/s |
 | Prefill dei due prompt successivi al primo misurato | 39,6–42,5 tok/s |
 | Picco MLX | 12,29 GB |
+| Prompt 3.398 token, ctx 4K, KV 8 bit, chunk 128 | 7,58 tok/s, picco 12,49 GB |
+| Prompt 7.038 token, ctx 8K, KV 4 bit, chunk 64 | 7,43 tok/s, picco 12,40 GB |
+| Prompt 3.346 token con KV bf16 (chunk 256 e 128) | OOM nel prefill |
 | MTP 3-bit | OOM nel warm-up, default seriale |
 
 Il precedente percorso C/SSD misurava circa 0,04 token/s. Output grezzi,
@@ -206,26 +220,42 @@ raccomandato di circa **12,71 GB**. Il target occupa 11,77 GB; con MTP i soli
 pesi arrivano a circa 11,96 GB. Restano da allocare stato GatedDeltaNet, KV
 cache, attivazioni, grafi e buffer temporanei.
 
+Solo 16 dei 64 layer hanno una KV cache (circa 64 KiB/token in bf16); gli
+altri usano stato ricorrente GatedDeltaNet a dimensione costante. Il collo di
+bottiglia del contesto lungo non è lo storage KV ma il picco transiente del
+prefill: la mitigazione misurata è quantizzare la KV cache dal token 0 e
+ridurre il chunk di prefill.
+
 Le impostazioni predefinite sono quindi:
 
-- contesto: 1.024 token;
-- prefill chunk: 256 token;
+- profilo `deep`: contesto 8.192, KV 4 bit, chunk prefill 64;
+- profilo `balanced`: contesto 4.096, KV 8 bit, chunk prefill 128;
+- profilo `quick` e benchmark: contesto 1.024, KV bf16, chunk prefill 256;
 - una sola sequenza server;
 - decode seriale finché il benchmark locale non raccomanda MTP;
 - cache libera MLX limitata a 64 MB;
 - fusione GDN che duplica circa 1,8 GB di pesi disattivata.
 
-Il wrapper rifiuta normalmente contesti superiori a 2.048 token e, con MTP,
-superiori a 1.024 token. L'override
-`DWARFSTAR_ALLOW_UNSAFE_CONTEXT=1` è diagnostico: può causare swap, terminazione
-del processo o instabilità del sistema. Il contesto teorico da 262K del modello
-non è realizzabile su un Mac da 16 GB.
+I limiti di contesto dipendono dalla quantizzazione KV e sono stati misurati
+sul Mac di destinazione:
+
+| KV cache | Limite contesto |
+| --- | ---: |
+| bf16 (`--kv-bits 0`) | 2.048 |
+| quantizzata ≥ 6 bit | 4.096 |
+| quantizzata < 6 bit | 8.192 |
+| con MTP | 1.024 |
+
+Il chunk di prefill viene ridotto automaticamente (256 fino a 2K, 128 fino a
+4K, 64 oltre). L'override `DWARFSTAR_ALLOW_UNSAFE_CONTEXT=1` è diagnostico:
+può causare swap, terminazione del processo o instabilità del sistema. Il
+contesto teorico da 262K del modello non è realizzabile su un Mac da 16 GB.
 
 Per ridurre il rischio di OOM:
 
 - chiudi applicazioni pesanti prima di caricare il modello;
 - non avviare due processi del modello contemporaneamente;
-- prova prima `--no-mtp` e contesto 1K;
+- in caso di OOM ripiega su `--profile balanced` o `--profile quick`;
 - esegui `make qwen-doctor` dopo setup e download;
 - non abilitare `DWARFSTAR_ALLOW_FUSED_GDN=1` su 16 GB.
 
@@ -320,16 +350,20 @@ make qwen-server
 Useful direct commands:
 
 ```sh
-./dwarfstar generate --no-mtp "Explain lock-free queues with a small example."
-./dwarfstar chat --no-mtp
+./dwarfstar "Explain lock-free queues with a small example."   # one-shot ask
+./dwarfstar chat --profile balanced
 ./dwarfstar benchmark --mode serial
 ./dwarfstar serve --host 127.0.0.1 --port 8080 --max-sequences 1
 ```
 
-The default context is 1,024 tokens. Serial contexts above 2,048 and MTP
-contexts above 1,024 are rejected on the 16 GB profile. MTP is experimental
-and stays disabled until a valid local benchmark profile recommends it. Run
-only one model process and one active server sequence.
+The default `deep` profile runs xhigh thinking in an 8,192-token context with
+a 4-bit quantized KV cache and a 64-token prefill chunk, the configuration
+validated on the M4 16 GB machine. `balanced` uses 4,096 tokens with 8-bit KV;
+`quick` disables thinking at 1,024 tokens. Context caps depend on KV
+quantization (2,048 for bf16 KV, 4,096 at 8-bit, 8,192 at 4-bit, 1,024 with
+MTP). MTP is experimental and stays disabled until a valid local benchmark
+profile recommends it. Run only one model process and one active server
+sequence.
 
 Default model revisions are immutable:
 

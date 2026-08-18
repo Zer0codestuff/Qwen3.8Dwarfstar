@@ -181,11 +181,37 @@ aggressivamente quantizzato su hardware con più memoria.
 - chat interattiva reale: risposta `CHAT OK`, limite KV inoltrato e `Ctrl-D`
   pulito con exit 0; secondo processo concorrente rifiutato con exit 2.
 
+## Addendum — contesto lungo e KV quantizzata (18 agosto 2026)
+
+La versione 0.3.0 ha introdotto le sessioni con reasoning (`ask`/`chat`).
+Le prove di prefill lungo eseguite sulla stessa macchina hanno mostrato che il
+limite reale non è lo storage della KV cache (solo 16 layer su 64 ne hanno
+una, circa 64 KiB/token in bf16) ma il picco transiente del prefill:
+
+| Prova (prompt reale, retrieval esatto verificato) | Esito |
+| --- | --- |
+| 3.346 token, ctx 4096, KV bf16, chunk 256 | OOM nel prefill |
+| 3.346 token, ctx 4096, KV bf16, chunk 128 | OOM nel prefill |
+| 3.398 token, ctx 4096, KV 8 bit, chunk 128 | OK: 7,58 tok/s, picco 12,49 GB |
+| 6.986 token, ctx 8192, KV 8 bit, chunk 64 | OOM nel prefill |
+| 7.038 token, ctx 8192, KV 4 bit, chunk 64 | OK: 7,43 tok/s, picco 12,40 GB |
+| Chat 2 turni, default deep (8192/kv4/chunk 64) | OK: 175 token riusati dalla cache, 7,28 tok/s, picco 12,08 GB |
+
+Politica adottata: limiti di contesto legati alla quantizzazione KV (bf16 →
+2.048; ≥ 6 bit → 4.096; < 6 bit → 8.192; MTP → 1.024), chunk di prefill
+ridotto automaticamente (256/128/64) e `--quantized-kv-start 0` obbligatorio
+quando la KV è quantizzata (il default upstream, token 5000, la renderebbe un
+no-op entro questi limiti). I profili `deep` (8192/kv4, thinking xhigh) e
+`balanced` (4096/kv8, thinking medium) usano solo configurazioni misurate. Il
+checkpoint 2-bit è stato valutato e scartato: libererebbe circa 3,5 GB ma
+degrada proprio la qualità del ragionamento che motiva questo runtime.
+
 ## Limiti residui e uso raccomandato
 
 1. Il target è solo testo; immagini, audio e video non sono supportati.
-2. Usare il contesto predefinito 1K e una sola sequenza; il wrapper limita il
-   seriale a 2K. Il limite teorico 262K del modello non è praticabile su 16 GB.
+2. Usare i profili validati: `deep` 8K con KV 4 bit, `balanced` 4K con KV
+   8 bit, `quick` 1K bf16. Senza KV quantizzata il limite è 2K. Il limite
+   teorico 262K del modello non è praticabile su 16 GB.
 3. Lasciare MTP in `auto`/seriale. Anche il minimo block size valido (2, cioè un
    token draft) va in OOM. Un kernel q3 dedicato o un checkpoint più piccolo
    resta la strada più promettente.

@@ -271,8 +271,8 @@ def apply_server_model_aliases(target_path: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if not args or args[0] not in {"generate", "server"}:
-        print("runner requires 'generate' or 'server'", file=sys.stderr)
+    if not args or args[0] not in {"ask", "chat", "generate", "server"}:
+        print("runner requires 'ask', 'chat', 'generate' or 'server'", file=sys.stderr)
         return 2
 
     mode = args.pop(0)
@@ -280,6 +280,10 @@ def main(argv: list[str] | None = None) -> int:
     apply_low_memory_profile()
     _runtime_lock = acquire_runtime_lock()
     args = pin_default_models(args)
+    if mode in {"ask", "chat"}:
+        from .session import main as session_main
+
+        return session_main(mode, args)
     if mode == "generate":
         apply_reasoning_effort(reasoning_effort)
         if "--chat" in args:

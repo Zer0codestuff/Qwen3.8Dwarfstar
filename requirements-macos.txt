@@ -1,5 +1,6 @@
 # Pinned together: Qwen 3.8 landed in this MLX/MLX-VLM generation.
 huggingface-hub==1.27.0
+jinja2==3.1.6
 mlx==0.32.1
 mlx-vlm==0.6.14
 transformers==5.15.0

@@ -45,6 +45,25 @@ class QwenTokenizerGoldenTests(unittest.TestCase):
             [248045, 846, 198, 9419, 248046, 198, 248045, 74455, 198, 248068, 198],
         )
 
+    def test_prior_reasoning_is_preserved_for_exact_cache_reuse(self):
+        rendered = self.tokenizer.apply_chat_template(
+            [
+                {"role": "user", "content": "A"},
+                {
+                    "role": "assistant",
+                    "reasoning_content": "controllo A",
+                    "content": "B",
+                },
+                {"role": "user", "content": "C"},
+            ],
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=True,
+            reasoning_effort="xhigh",
+            preserve_thinking=True,
+        )
+        self.assertIn("<think>\ncontrollo A\n</think>\n\nB<|im_end|>", rendered)
+
     def test_qwen_whitespace_regex(self):
         self.assertEqual(
             self.tokenizer.encode("alpha  beta", add_special_tokens=False),

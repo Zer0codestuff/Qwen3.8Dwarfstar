@@ -38,6 +38,7 @@ __pycache__/
 /.venv/
 /.dwarfstar/
 /.audit/
+/.factory/
 /benchmark-results/*
 !/benchmark-results/qwen38-m4-complex.json
 !/benchmark-results/qwen38-m4-final-smoke.json

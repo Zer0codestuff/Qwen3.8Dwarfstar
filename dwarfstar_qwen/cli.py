@@ -5,7 +5,12 @@ import os
 import sys
 import traceback
 
-from .backend import SamplingConfig, build_generate_command, build_server_command
+from .backend import (
+    SamplingConfig,
+    build_generate_command,
+    build_server_command,
+    build_session_command,
+)
 from .config import (
     DEFAULT_CONTEXT_SIZE,
     DEFAULT_MODEL,
@@ -15,14 +20,24 @@ from .config import (
 )
 from .doctor import print_report
 from .download import download_models
+from .presets import PROFILES, GenerationProfile, resolve_profile
 
 
-def _runtime_arguments(parser: argparse.ArgumentParser) -> None:
+COMMANDS = {"ask", "chat", "generate", "serve", "benchmark", "doctor", "download"}
+
+
+def _runtime_arguments(
+    parser: argparse.ArgumentParser, *, profile_context: bool = False
+) -> None:
     parser.add_argument("--model", default=None, help=f"target model (default: {DEFAULT_MODEL})")
     parser.add_argument(
         "--mtp-model", default=None, help=f"MTP head (default: {DEFAULT_MTP_MODEL})"
     )
-    parser.add_argument("--ctx-size", type=int, default=DEFAULT_CONTEXT_SIZE)
+    parser.add_argument(
+        "--ctx-size",
+        type=int,
+        default=None if profile_context else DEFAULT_CONTEXT_SIZE,
+    )
     parser.add_argument("--prefill-step-size", type=int, default=DEFAULT_PREFILL_STEP_SIZE)
     parser.add_argument("--mtp-block-size", type=int, default=3)
     mtp = parser.add_mutually_exclusive_group()
@@ -49,23 +64,77 @@ def _runtime_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _generation_arguments(parser: argparse.ArgumentParser) -> None:
-    _runtime_arguments(parser)
-    parser.add_argument("--max-tokens", type=int, default=256)
-    parser.add_argument("--system")
-    parser.add_argument("--temperature", type=float, default=0.0)
-    parser.add_argument("--top-p", type=float, default=1.0)
-    parser.add_argument("--top-k", type=int, default=0)
+    _runtime_arguments(parser, profile_context=True)
     parser.add_argument(
-        "--thinking", choices=("enabled", "disabled"), default="disabled"
+        "--profile",
+        choices=tuple(PROFILES),
+        default="deep",
+        help="deep (massima qualità), balanced o quick",
+    )
+    parser.add_argument("--max-tokens", type=int)
+    parser.add_argument("--system")
+    parser.add_argument("--temperature", type=float)
+    parser.add_argument("--top-p", type=float)
+    parser.add_argument("--top-k", type=int)
+    parser.add_argument("--min-p", type=float)
+    parser.add_argument("--presence-penalty", type=float)
+    parser.add_argument("--repetition-penalty", type=float)
+    parser.add_argument(
+        "--thinking", choices=("enabled", "disabled")
     )
     parser.add_argument("--reasoning-effort", choices=("xhigh", "medium", "low"))
-    parser.add_argument("--kv-bits", type=float, default=0)
+    parser.add_argument("--thinking-budget", type=int)
+    parser.add_argument("--answer-reserve", type=int)
+    parser.add_argument(
+        "--kv-bits",
+        type=float,
+        default=None,
+        help="KV cache quantization bits; 0 disables (default: profile value)",
+    )
+    parser.add_argument(
+        "--show-thinking",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="mostra anche il ragionamento generato",
+    )
+    parser.add_argument(
+        "--preserve-thinking",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="mantieni il ragionamento nella cache dei turni successivi",
+    )
+    parser.add_argument("--stats", action="store_true", help="mostra metriche MLX")
     parser.add_argument("--quiet", action="store_true")
 
 
-def _config(args: argparse.Namespace):
+def _generation_profile(args: argparse.Namespace) -> GenerationProfile:
+    return resolve_profile(
+        args.profile,
+        context_size=args.ctx_size,
+        kv_bits=args.kv_bits,
+        max_tokens=args.max_tokens,
+        thinking=args.thinking,
+        reasoning_effort=args.reasoning_effort,
+        temperature=args.temperature,
+        top_p=args.top_p,
+        top_k=args.top_k,
+        min_p=args.min_p,
+        presence_penalty=args.presence_penalty,
+        repetition_penalty=args.repetition_penalty,
+        thinking_budget=args.thinking_budget,
+        answer_reserve=args.answer_reserve,
+    )
+
+
+def _config(
+    args: argparse.Namespace, settings: GenerationProfile | None = None
+):
     from .profile import recommended_mtp
 
+    if settings is None and hasattr(args, "profile"):
+        settings = _generation_profile(args)
+    context_size = settings.context_size if settings else args.ctx_size
+    kv_bits = settings.kv_bits if settings else args.kv_bits
     use_mtp = args.mtp
     if use_mtp is None:
         effective_model = args.model or os.environ.get("DWARFSTAR_MODEL", DEFAULT_MODEL)
@@ -75,15 +144,16 @@ def _config(args: argparse.Namespace):
         is_default_target = effective_model == DEFAULT_MODEL
         is_default_draft = effective_mtp_model == DEFAULT_MTP_MODEL
         use_mtp = is_default_target and is_default_draft and recommended_mtp(
-            context_size=args.ctx_size,
-            prefill_step_size=min(args.prefill_step_size, args.ctx_size),
+            context_size=context_size,
+            prefill_step_size=min(args.prefill_step_size, context_size),
             mtp_block_size=args.mtp_block_size,
         )
     return runtime_config(
         model=args.model,
         mtp_model=args.mtp_model,
-        context_size=args.ctx_size,
+        context_size=context_size,
         prefill_step_size=args.prefill_step_size,
+        kv_bits=kv_bits,
         use_mtp=use_mtp,
         mtp_block_size=args.mtp_block_size,
     )
@@ -92,6 +162,18 @@ def _config(args: argparse.Namespace):
 def _exec(command: list[str]) -> int:
     os.execv(command[0], command)
     return 127
+
+
+def _normalize_argv(argv: list[str]) -> list[str]:
+    """Make no command mean chat, and plain text mean a one-shot question."""
+
+    if not argv:
+        return ["chat"]
+    if argv[0] in COMMANDS or argv[0] in {"-h", "--help"}:
+        return argv
+    if argv[0].startswith("-"):
+        return ["chat", *argv]
+    return ["ask", *argv]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -107,7 +189,11 @@ def build_parser() -> argparse.ArgumentParser:
     download = sub.add_parser("download", help="download the memory-safe target and MTP head")
     download.add_argument("--model", default=DEFAULT_MODEL)
     download.add_argument("--mtp-model", default=DEFAULT_MTP_MODEL)
-    download.add_argument("--mtp", action=argparse.BooleanOptionalAction, default=True)
+    download.add_argument("--mtp", action=argparse.BooleanOptionalAction, default=False)
+
+    ask = sub.add_parser("ask", help="fai una domanda con ragionamento profondo")
+    _generation_arguments(ask)
+    ask.add_argument("prompt", nargs="*", help="domanda; ometti per leggere stdin")
 
     generate = sub.add_parser("generate", help="one-shot generation using the Qwen chat template")
     _generation_arguments(generate)
@@ -115,16 +201,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     chat = sub.add_parser("chat", help="interactive multi-turn chat")
     _generation_arguments(chat)
+    chat.add_argument("prompt", nargs="*", help="messaggio iniziale facoltativo")
 
     serve = sub.add_parser("serve", help="OpenAI-compatible MLX server")
     _runtime_arguments(serve)
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8080)
-    serve.add_argument("--max-tokens", type=int, default=512)
+    serve.add_argument("--max-tokens", type=int, default=3072)
     serve.add_argument("--max-sequences", type=int, default=1)
-    serve.add_argument("--thinking", action="store_true")
+    serve.add_argument(
+        "--thinking", action=argparse.BooleanOptionalAction, default=True
+    )
     serve.add_argument("--api-key")
-    serve.add_argument("--kv-bits", type=float, default=0)
+    serve.add_argument(
+        "--kv-bits",
+        type=float,
+        default=8,
+        help="KV cache quantization bits; 0 disables and caps the context at 2048",
+    )
 
     bench = sub.add_parser(
         "benchmark", help="benchmark serial and MTP decoding on complex prompts"
@@ -143,37 +237,62 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    args = build_parser().parse_args(_normalize_argv(raw_argv))
     if args.command == "doctor":
         return print_report(as_json=args.json)
     if args.command == "download":
         download_models(model=args.model, mtp_model=args.mtp_model, include_mtp=args.mtp)
         return 0
-    if args.command in {"generate", "chat"}:
-        if args.command == "chat":
+    if args.command in {"ask", "generate", "chat"}:
+        settings = _generation_profile(args)
+        if args.command in {"ask", "chat"}:
             if args.mtp is True:
                 raise ValueError(
-                    "interactive chat is serial-only on this runtime; use --no-mtp"
-                )
-            if args.thinking != "disabled":
-                raise ValueError(
-                    "interactive multi-turn thinking is not supported safely; "
-                    "use one-shot generate instead"
+                    "ask/chat are serial-only on this 16 GB runtime; use --no-mtp"
                 )
             args.mtp = False
-        prompt = None if args.command == "chat" else args.prompt
+        if args.command in {"ask", "chat"}:
+            prompt = " ".join(args.prompt).strip() or None
+        else:
+            prompt = args.prompt
         if args.command == "generate" and prompt is None:
             prompt = sys.stdin.read()
+        sampling = SamplingConfig(
+            settings.temperature,
+            settings.top_p,
+            settings.top_k,
+            settings.min_p,
+            settings.presence_penalty,
+            settings.repetition_penalty,
+        )
+        if args.command in {"ask", "chat"}:
+            command = build_session_command(
+                _config(args, settings),
+                mode=args.command,
+                prompt=prompt,
+                system=args.system,
+                max_tokens=settings.max_tokens,
+                sampling=sampling,
+                thinking=settings.thinking,
+                reasoning_effort=settings.reasoning_effort,
+                thinking_budget=settings.thinking_budget,
+                answer_reserve=settings.answer_reserve,
+                show_thinking=args.show_thinking,
+                preserve_thinking=args.preserve_thinking,
+                show_stats=args.stats,
+                quiet=args.quiet,
+            )
+            return _exec(command)
         command = build_generate_command(
-            _config(args),
+            _config(args, settings),
             prompt=prompt,
             system=args.system,
-            max_tokens=args.max_tokens,
-            sampling=SamplingConfig(args.temperature, args.top_p, args.top_k),
-            thinking=args.thinking,
-            reasoning_effort=args.reasoning_effort,
-            chat=args.command == "chat",
-            kv_bits=args.kv_bits,
+            max_tokens=settings.max_tokens,
+            sampling=sampling,
+            thinking=settings.thinking,
+            reasoning_effort=settings.reasoning_effort,
+            thinking_budget=settings.thinking_budget,
             verbose=not args.quiet,
         )
         return _exec(command)
@@ -186,7 +305,6 @@ def main(argv: list[str] | None = None) -> int:
             max_sequences=args.max_sequences,
             thinking=args.thinking,
             api_key=args.api_key,
-            kv_bits=args.kv_bits,
         )
         return _exec(command)
     if args.command == "benchmark":

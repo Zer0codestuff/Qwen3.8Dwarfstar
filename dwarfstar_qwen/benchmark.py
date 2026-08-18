@@ -195,11 +195,14 @@ def _load_runtime(model_reference: str, mtp_reference: str, include_mtp: bool):
 def run_cli_benchmark(args: Any) -> int:
     if args.max_tokens < 1 or args.repeats < 1:
         raise ValueError("max tokens and repeats must be positive")
+    # The benchmark measures the plain serial/MTP decode paths without KV
+    # quantization, so its context cap is the bf16 one.
     config = runtime_config(
         model=args.model,
         mtp_model=args.mtp_model,
         context_size=args.ctx_size,
         prefill_step_size=args.prefill_step_size,
+        kv_bits=0.0,
         use_mtp=args.mode in {"mtp", "both"},
         mtp_block_size=args.mtp_block_size,
     )
