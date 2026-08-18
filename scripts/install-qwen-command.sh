@@ -28,4 +28,4 @@ fi
 
 ln -s "$TARGET" "$DESTINATION"
 echo "Installed: $DESTINATION -> $TARGET"
-echo "Try: dwarfstar \"Spiegami questo problema\""
+echo "Try: dwarfstar \"Explain this problem\""

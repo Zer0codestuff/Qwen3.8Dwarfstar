@@ -104,8 +104,8 @@ def allocate_turn_budget(
     available = context_size - prompt_tokens - CONTEXT_GUARD_TOKENS
     if available < MIN_GENERATION_TOKENS:
         raise ValueError(
-            f"contesto pieno ({prompt_tokens}/{context_size} token); "
-            "usa /clear per iniziare una nuova conversazione"
+            f"context full ({prompt_tokens}/{context_size} tokens); "
+            "use /clear to start a new conversation"
         )
     generation = min(max_tokens, available)
     thinking_budget = None
@@ -213,11 +213,11 @@ def _stream_turn(
     if emit_output and not args.quiet:
         if thinking_enabled:
             print(
-                f"Qwen · ragionamento {args.reasoning_effort} in corso…",
+                f"Qwen · reasoning {args.reasoning_effort} in progress…",
                 flush=True,
             )
             if args.show_thinking:
-                print("\nPensiero > ", end="", flush=True)
+                print("\nThought > ", end="", flush=True)
         else:
             print("Qwen > ", end="", flush=True)
             answer_started = True
@@ -270,7 +270,7 @@ def _stream_turn(
         print(flush=True)
         if thinking_enabled and not closed:
             print(
-                "[avviso: budget terminato prima della chiusura del ragionamento]",
+                "[warning: budget exhausted before the reasoning block was closed]",
                 file=sys.stderr,
             )
     if last is None:
@@ -289,19 +289,19 @@ def _stream_turn(
 
 def _print_help() -> None:
     print(
-        "Comandi: /clear  /stats  /effort xhigh|medium|low  "
+        "Commands: /clear  /stats  /effort xhigh|medium|low  "
         "/thinking on|off  /help  /exit"
     )
 
 
 def _print_stats(result: TurnResult | None) -> None:
     if result is None:
-        print("Nessuna generazione completata.")
+        print("No generation completed yet.")
         return
     print(
-        f"prompt {result.prompt_tokens} · cache riusata {result.cached_tokens} · "
-        f"generati {result.generation_tokens} · {result.generation_tps:.2f} tok/s · "
-        f"picco MLX {result.peak_memory_gb:.2f} GB · fine {result.finish_reason}"
+        f"prompt {result.prompt_tokens} · cache reused {result.cached_tokens} · "
+        f"generated {result.generation_tokens} · {result.generation_tps:.2f} tok/s · "
+        f"MLX peak {result.peak_memory_gb:.2f} GB · finish {result.finish_reason}"
     )
 
 
@@ -370,7 +370,7 @@ def main(mode: str, argv: Iterable[str]) -> int:
         raise ValueError("kv-bits must be zero or at least 2")
 
     if not args.quiet:
-        print("Caricamento di Qwen 3.8 27B…", file=sys.stderr, flush=True)
+        print("Loading Qwen 3.8 27B…", file=sys.stderr, flush=True)
     started = time.perf_counter()
     from mlx_vlm import load
     from mlx_vlm.utils import load_config
@@ -379,8 +379,8 @@ def main(mode: str, argv: Iterable[str]) -> int:
     config = load_config(args.model)
     if not args.quiet:
         print(
-            f"Modello pronto in {time.perf_counter() - started:.1f}s · "
-            f"contesto {args.max_kv_size} · seriale",
+            f"Model ready in {time.perf_counter() - started:.1f}s · "
+            f"context {args.max_kv_size} · serial",
             file=sys.stderr,
             flush=True,
         )
@@ -392,7 +392,7 @@ def main(mode: str, argv: Iterable[str]) -> int:
         if user is None:
             user = sys.stdin.read().strip()
         if not user:
-            raise ValueError("scrivi una domanda oppure passala tramite stdin")
+            raise ValueError("write a question or pass it via stdin")
         result = _run_one(model, processor, config, messages, cache_state, user, args)
         if args.stats:
             _print_stats(result)
@@ -406,11 +406,11 @@ def main(mode: str, argv: Iterable[str]) -> int:
         last = None
     if not args.quiet:
         print(
-            "Chat pronta. Invio per parlare, /help per i comandi, Ctrl-D per uscire."
+            "Chat ready. Press Enter to talk, /help for commands, Ctrl-D to exit."
         )
     while True:
         try:
-            user = input("\nTu > ").strip()
+            user = input("\nYou > ").strip()
         except EOFError:
             print()
             return 0
@@ -426,7 +426,7 @@ def main(mode: str, argv: Iterable[str]) -> int:
             cache_state = _new_cache_state()
             last = None
             _clear_cache()
-            print("Conversazione e cache azzerate.")
+            print("Conversation and cache cleared.")
             continue
         if user == "/stats":
             _print_stats(last)
@@ -434,15 +434,15 @@ def main(mode: str, argv: Iterable[str]) -> int:
         if user.startswith("/effort "):
             effort = user.split(maxsplit=1)[1]
             if effort not in {"xhigh", "medium", "low"}:
-                print("Valori validi: xhigh, medium, low")
+                print("Valid values: xhigh, medium, low")
             else:
                 args.reasoning_effort = effort
-                print(f"Ragionamento impostato su {effort}.")
+                print(f"Reasoning effort set to {effort}.")
             continue
         if user.startswith("/thinking "):
             value = user.split(maxsplit=1)[1]
             if value not in {"on", "off"}:
-                print("Valori validi: on, off")
+                print("Valid values: on, off")
             else:
                 args.thinking_mode = "enabled" if value == "on" else "disabled"
                 print(f"Thinking {value}.")

@@ -190,9 +190,9 @@ Supporting files:
 - `Makefile` — the `qwen-*` targets are the only targets (`qwen-help` is the
   default goal).
 
-Docs: `README.md` is the user-facing entry (mostly Italian with an English
-quick start), `AUDIT_QWEN38.md` is the authoritative Qwen audit with measured
-numbers, `THIRD_PARTY_NOTICES.md` lists licensing.
+Docs: `README.md` is the user-facing entry, `AUDIT_QWEN38.md` is the
+authoritative Qwen audit with measured numbers, `THIRD_PARTY_NOTICES.md`
+lists licensing.
 
 ## Build and commands
 
@@ -216,7 +216,7 @@ Extra options pass through `QWEN_*_ARGS`, for example
   thinking-split behavior, profile revision binding, the low-memory patch,
   server model allowlist and the runtime lock.
 - Real validation on the 16 GB Mac: `make qwen-doctor`, then `make qwen-bench`.
-  Also exercise Italian outputs, code, math, Unicode, tool calls, long
+  Also exercise code, math, Unicode, tool calls, long
   prompts, OpenAI-compatible server requests (`/v1/models`,
   `/v1/chat/completions`, alias allowlist, `developer` normalization,
   `max_tokens: 0` rejection) and the second-process lock rejection.

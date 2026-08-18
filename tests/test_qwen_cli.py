@@ -246,8 +246,8 @@ class ParserTests(unittest.TestCase):
     def test_plain_text_and_empty_argv_have_simple_defaults(self):
         self.assertEqual(_normalize_argv([]), ["chat"])
         self.assertEqual(
-            _normalize_argv(["spiegami", "questo"]),
-            ["ask", "spiegami", "questo"],
+            _normalize_argv(["explain", "this"]),
+            ["ask", "explain", "this"],
         )
         self.assertEqual(
             _normalize_argv(["--profile", "quick"]),
@@ -281,16 +281,16 @@ class SessionPolicyTests(unittest.TestCase):
     def test_thinking_marker_can_span_stream_chunks(self):
         stream = ThinkingStream(True)
         events = []
-        for part in ("analisi", " accurata</thi", "nk>\n\nrisposta"):
+        for part in ("careful", " analysis</thi", "nk>\n\nresult"):
             events.extend(stream.feed(part))
         reasoning, answer, closed = stream.finish()
         self.assertTrue(closed)
-        self.assertEqual(reasoning, "analisi accurata")
-        self.assertEqual(answer, "risposta")
+        self.assertEqual(reasoning, "careful analysis")
+        self.assertEqual(answer, "result")
         streamed_answer = "".join(
             text for kind, text in events if kind == "answer"
         ).strip()
-        self.assertEqual(streamed_answer, "risposta")
+        self.assertEqual(streamed_answer, "result")
 
     def test_budget_preserves_final_answer_space(self):
         budget = allocate_turn_budget(
@@ -305,7 +305,7 @@ class SessionPolicyTests(unittest.TestCase):
         self.assertEqual(budget.thinking_budget, 656)
 
     def test_full_context_is_rejected_before_decode(self):
-        with self.assertRaisesRegex(ValueError, "contesto pieno"):
+        with self.assertRaisesRegex(ValueError, "context full"):
             allocate_turn_budget(
                 prompt_tokens=4070,
                 context_size=4096,

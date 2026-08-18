@@ -69,7 +69,7 @@ def _generation_arguments(parser: argparse.ArgumentParser) -> None:
         "--profile",
         choices=tuple(PROFILES),
         default="deep",
-        help="deep (massima qualità), balanced o quick",
+        help="deep (maximum quality), balanced or quick",
     )
     parser.add_argument("--max-tokens", type=int)
     parser.add_argument("--system")
@@ -95,13 +95,13 @@ def _generation_arguments(parser: argparse.ArgumentParser) -> None:
         "--show-thinking",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="mostra anche il ragionamento generato",
+        help="also show the generated reasoning",
     )
     parser.add_argument(
         "--preserve-thinking",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="mantieni il ragionamento nella cache dei turni successivi",
+        help="keep the reasoning in the next-turn cache",
     )
     parser.add_argument("--stats", action="store_true", help="mostra metriche MLX")
     parser.add_argument("--quiet", action="store_true")
@@ -191,9 +191,9 @@ def build_parser() -> argparse.ArgumentParser:
     download.add_argument("--mtp-model", default=DEFAULT_MTP_MODEL)
     download.add_argument("--mtp", action=argparse.BooleanOptionalAction, default=False)
 
-    ask = sub.add_parser("ask", help="fai una domanda con ragionamento profondo")
+    ask = sub.add_parser("ask", help="ask a question with deep reasoning")
     _generation_arguments(ask)
-    ask.add_argument("prompt", nargs="*", help="domanda; ometti per leggere stdin")
+    ask.add_argument("prompt", nargs="*", help="question; omit to read from stdin")
 
     generate = sub.add_parser("generate", help="one-shot generation using the Qwen chat template")
     _generation_arguments(generate)
@@ -201,7 +201,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     chat = sub.add_parser("chat", help="interactive multi-turn chat")
     _generation_arguments(chat)
-    chat.add_argument("prompt", nargs="*", help="messaggio iniziale facoltativo")
+    chat.add_argument("prompt", nargs="*", help="optional first message")
 
     serve = sub.add_parser("serve", help="OpenAI-compatible MLX server")
     _runtime_arguments(serve)

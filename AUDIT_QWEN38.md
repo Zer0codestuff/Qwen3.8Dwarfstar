@@ -1,226 +1,220 @@
-# Audit e validazione — DwarfStar Qwen 3.8 27B
+# Audit and validation — DwarfStar Qwen 3.8 27B
 
-Data della prova: 18 agosto 2026. Hardware: MacBook Apple M4, 10 core GPU,
-16 GiB di memoria unificata, macOS 26.5.2. Tutte le misure riportate qui sono
-state eseguite sulla macchina di destinazione, non estrapolate da benchmark
-pubblici.
+Test date: August 18, 2026. Hardware: Apple M4 MacBook, 10-core GPU, 16 GiB of
+unified memory, macOS 26.5.2. All measurements in this document were taken on
+the target machine, not extrapolated from public benchmarks.
 
-## Esito
+## Outcome
 
-Il port C/Metal trovato nel repository non era un engine Qwen utilizzabile su
-questo Mac: il forward CPU produceva testo plausibile, ma lo streaming dei pesi
-dal disco raggiungeva circa 0,04 token/s, mentre il GGUF da 13,82 GB non entrava
-nel working set Metal. Il percorso supportato è stato quindi ricostruito sopra
-MLX-VLM con un checkpoint text-only affine 3-bit da 11,77 GB e un profilo
-low-memory specifico per 16 GB.
+The C/Metal port found in the repository was not a usable Qwen engine on this
+Mac: the CPU forward pass produced plausible text, but streaming the weights
+from disk reached about 0.04 tok/s, while the 13.82 GB GGUF did not fit in
+the Metal working set. The supported path was therefore rebuilt on top of
+MLX-VLM with a text-only affine 3-bit 11.77 GB checkpoint and a low-memory
+profile specific to 16 GB.
 
-Il risultato operativo è stabile in decoding seriale: mediana 7,35 token/s sui
-tre prompt complessi, picco massimo 12,29 GB e server OpenAI-compatible
-funzionante. MTP non è attivabile in sicurezza con questa combinazione di
-hardware, pesi 3-bit e kernel correnti: due prove con block size 3 e una con il
-minimo valido 2, eseguite anche dopo aver chiuso Zen, sono terminate con
-`kIOGPUCommandBufferCallbackErrorOutOfMemory` nel warm-up. Il runtime lo
-registra e mantiene il seriale come default.
+The result is stable in serial decoding: 7.35 tok/s median on the three
+complex prompts, 12.29 GB peak, and a working OpenAI-compatible server. MTP
+cannot be enabled safely with this combination of hardware, 3-bit weights and
+current kernels: two trials with block size 3 and one with the minimum valid
+size 2, also run after closing Zen, ended with
+`kIOGPUCommandBufferCallbackErrorOutOfMemory` during warm-up. The runtime
+records it and keeps serial as the default.
 
-## Problemi trovati nel port nativo
+## Issues found in the native port
 
-La parte matematica principale di Qwen 3.8 era più completa di quanto lasciasse
-supporre il comportamento esterno: GatedDeltaNet, convoluzione, RMSNorm Q/K,
-GQA, gated attention e mapping delle teste erano sostanzialmente allineati al
-layout GGUF atteso. I problemi bloccanti erano soprattutto di integrazione e di
-architettura runtime.
+The main Qwen 3.8 math was more complete than the external behavior
+suggested: GatedDeltaNet, convolution, RMSNorm Q/K, GQA, gated attention and
+head mapping were substantially aligned with the expected GGUF layout. The
+blocking issues were mostly integration and runtime architecture.
 
-1. **Backend incompatibile con 16 GB.** Il GGUF Q3_K_M locale pesa 13,819 GB,
-   contro 12,713 GB di working set Metal raccomandato. Il full offload di
-   llama.cpp è andato in OOM; il percorso nativo leggeva invece circa 10–14 GB
-   di layer dal disco per ogni token.
-2. **Chat template Qwen non affidabile.** Alcuni ingressi venivano tokenizzati
-   come testo grezzo o passavano dal renderer DeepSeek; la costruzione manuale
-   dei marker ChatML non riproduceva il template ufficiale. Questo cambia in
-   modo sostanziale la distribuzione vista dal modello.
-3. **Tokenizer whitespace divergente.** Il port non implementava il look-ahead
-   Qwen per spazi ripetuti e indentazione. Esempi golden:
-   `alpha  beta` deve diventare `[6918, 220, 13053]`; una riga Python con quattro
-   spazi deve conservare l'indentazione secondo il tokenizer ufficiale.
-4. **Stato ricorrente non isolato per sessione.** Il runtime Qwen possedeva un
-   solo stato GDN/conv/KV mutabile; sessioni interlacciate, rewind e restore
-   potevano quindi contaminarsi.
-5. **Contesto mascherato.** Richieste oltre 4.096 token potevano essere ridotte
-   silenziosamente a 512 invece di essere rifiutate con un errore esplicito.
-6. **Dispatch Metal e stop incompleti.** Qwen poteva entrare nel batch Metal
-   generico senza un grafo Qwen inizializzato; inoltre occorre gestire entrambi
-   gli stop ufficiali, `248046` (`<|im_end|>`) e `248044`
-   (`<|endoftext|>`).
-7. **Persistenza dichiarata più ampia della realtà.** Lo snapshot della
-   sessione non copriva correttamente tutto lo stato ricorrente Qwen.
+1. **Backend incompatible with 16 GB.** The local Q3_K_M GGUF weighs 13.819 GB
+   against a recommended Metal working set of 12.713 GB. Full llama.cpp
+   offload ran out of memory; the native path instead read about 10–14 GB of
+   layers from disk per token.
+2. **Unreliable Qwen chat template.** Some inputs were tokenized as raw text
+   or went through the DeepSeek renderer; the hand-built ChatML markers did
+   not reproduce the official template. This substantially changes the
+   distribution seen by the model.
+3. **Divergent tokenizer whitespace.** The port did not implement the Qwen
+   look-ahead for repeated spaces and indentation. Golden examples:
+   `alpha  beta` must become `[6918, 220, 13053]`; a Python line with four
+   spaces must keep the indentation according to the official tokenizer.
+4. **Recurrent state not isolated per session.** The Qwen runtime owned a
+   single mutable GDN/conv/KV state; interleaved sessions, rewinds and
+   restores could therefore contaminate each other.
+5. **Masked context.** Requests over 4,096 tokens could be silently reduced
+   to 512 instead of being rejected with an explicit error.
+6. **Incomplete Metal dispatch and stops.** Qwen could enter the generic
+   Metal batch without an initialized Qwen graph; both official stops,
+   `248046` (`<|im_end|>`) and `248044` (`<|endoftext|>`), must be handled.
+7. **Persistence claimed wider than reality.** The session snapshot did not
+   correctly cover all the Qwen recurrent state.
 
-Questi difetti non sono stati nascosti dietro piccoli fix locali: il C nativo è
-rimasto esplicitamente un backend legacy sperimentale. Correggerlo fino a un
-Metal full-resident richiederebbe anche un formato di quantizzazione più piccolo
-e kernel Qwen dedicati; il solo refactoring delle API non risolverebbe il limite
-fisico dei pesi.
+These defects were not hidden behind small local fixes: the native C remained
+explicitly an experimental legacy backend. Making it Metal-resident would
+also require a smaller quantization format and dedicated Qwen kernels; pure
+API refactoring would not solve the physical weight limit.
 
-## Soluzione implementata
+## Solution implemented
 
-- checkpoint target
-  `lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly` bloccato alla revisione
+- target checkpoint
+  `lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly` pinned to revision
   `c98bba5926f51fec1c8d8737e577221673f524d7`;
-- testa MTP opzionale bloccata alla revisione
+- optional MTP head pinned to revision
   `9d061a0661258e75b401a11ac9fa22fc648e039d`;
-- versioni dirette bloccate: MLX 0.32.1, MLX-VLM 0.6.14,
-  Transformers 5.15.0 e Tokenizers 0.22.2;
-- template chat e tokenizer del checkpoint, senza BOS spurio e con i due stop
-  token ufficiali;
-- contesto predefinito 1.024, chunk prefill 256 e una sola sequenza server;
-- cache libera MLX limitata a 64 MB;
-- soglia guida dell'allocatore MLX ridotta dal default upstream, superiore al
-  working set raccomandato, al valore raccomandato da Metal; non è un hard cap;
-- disabilitazione della fusione GDN che, sul target 3-bit, conserverebbe una
-  copia concatenata aggiuntiva di circa 1,77 GB;
-- download e risoluzione a snapshot immutabile con verifica della dimensione
-  totale dei file dei pesi;
-- benchmark A/B che abilita MTP solo con parità del testo a decoding greedy,
-  almeno +3% di velocità e
-  memoria entro il limite; gli errori Metal diventano un risultato registrato,
-  non un crash;
-- terminazione sicura del worker dopo il flush. Con il 27B quasi al limite,
-  la finalizzazione parziale degli oggetti Metal provocava un segfault 139 dopo
-  una generazione già completata; le risorse vengono ora restituite
-  atomicamente dal sistema operativo;
-- server locale OpenAI-compatible con alias stabili `dwarfstar-qwen` e
-  `qwen3.8-27b`, allowlist del solo target pinned e normalizzazione del ruolo
-  `developer` in `system`;
-- lock di processo: chat, server e benchmark non possono caricare due copie del
-  27B contemporaneamente;
-- chat interattiva limitata al percorso seriale/no-thinking, con conteggio duro
-  del transcript prima del limite KV. Reasoning multi-turn e MTP vengono
-  rifiutati perché il ramo chat upstream non li conserva/inoltra correttamente.
+- direct versions pinned: MLX 0.32.1, MLX-VLM 0.6.14,
+  Transformers 5.15.0 and Tokenizers 0.22.2;
+- chat template and tokenizer from the checkpoint, without a spurious BOS and
+  with the two official stop tokens;
+- default context 1,024, prefill chunk 256 and a single server sequence;
+- MLX free cache limited to 64 MB;
+- MLX allocator guidance lowered from the upstream default, which exceeded
+  the recommended working set, to the value recommended by Metal; it is not
+  a hard cap;
+- GDN fusion disabled, which on the 3-bit target would have kept an extra
+  concatenated copy of about 1.77 GB;
+- downloads resolved to immutable snapshots with total weight file size
+  verification;
+- A/B benchmark that enables MTP only with greedy textual parity, at least
+  +3% speed and memory within the limit; Metal errors become a recorded
+  result, not a crash;
+- safe worker teardown after the flush. With the 27B almost at the limit,
+  piecemeal finalization of Metal objects caused a segfault 139 after a
+  completed generation; resources are now returned atomically by the OS;
+- local OpenAI-compatible server with stable aliases `dwarfstar-qwen` and
+  `qwen3.8-27b`, allowlist of the pinned target only and `developer` role
+  normalized to `system`;
+- process lock: chat, server and benchmark cannot load two copies of the 27B
+  at the same time;
+- interactive chat limited to the serial/no-thinking path with a hard
+  transcript count before the KV limit. Multi-turn reasoning and MTP are
+  rejected because the upstream chat branch does not preserve/forward them
+  correctly.
 
-## Memoria misurata
+## Measured memory
 
-| Voce | Valore |
+| Item | Value |
 | --- | ---: |
-| Memoria unificata fisica | 17,18 GB / 16 GiB |
-| Working set Metal raccomandato | 12,713 GB |
-| Pesi target 3-bit | 11,771 GB |
-| Pesi MTP aggiuntivi | 0,186 GB |
-| Picco seriale, prompt complessi | 12,248–12,294 GB |
-| Margine sul picco peggiore | circa 419 MB |
-| MTP, block size 2 e 3 | OOM nel warm-up, anche con Zen chiuso |
+| Physical unified memory | 17.18 GB / 16 GiB |
+| Recommended Metal working set | 12.713 GB |
+| 3-bit target weights | 11.771 GB |
+| Additional MTP weights | 0.186 GB |
+| Serial peak, complex prompts | 12.248–12.294 GB |
+| Margin over the worst peak | about 419 MB |
+| MTP, block sizes 2 and 3 | OOM in warm-up, even with Zen closed |
 
-Il margine è sufficiente per una sola sessione breve, ma non rende il modello
-indifferente alle altre applicazioni: RAM e banda sono unificate. Chiudere app
-pesanti riduce il rischio di pressione/swap; non ha però reso MTP eseguibile.
+The margin is enough for a single short session, but it does not make the
+model indifferent to other applications: RAM and bandwidth are unified.
+Closing heavy apps reduces the pressure/swap risk; it did not make MTP
+runnable.
 
-## Prestazioni
+## Performance
 
-| Percorso | Carico | Decode | Prefill | Picco | Esito |
+| Path | Load | Decode | Prefill | Peak | Result |
 | --- | --- | ---: | ---: | ---: | --- |
-| C nativo iniziale | 32 token, prompt semplice | 0,04 tok/s | 0,04 tok/s | RSS 4,18 GB | 920,91 s |
-| C nativo iniziale | aritmetica, 16 token | 0,04 tok/s | 0,04 tok/s | RSS 4,04 GB | 1.208,27 s, risposta tronca |
-| C nativo iniziale | codice, 24 token | 0,04 tok/s | 0,04 tok/s | RSS 3,97 GB | 1.370,21 s, risposta tronca |
-| MLX seriale finale | 3 prompt × 256 token | **7,35 tok/s mediana** | 7,3–42,5 tok/s | 12,29 GB | stabile |
-| MLX seriale, runtime finale | 3 prompt × 32 token | 5,31 tok/s mediana | 35,2–41,5 tok/s | 12,29 GB | stabile |
-| Server caldo | richiesta breve | 5,1 tok/s | 23,5 tok/s | 12,09 GB | HTTP 200 |
-| MTP 3-bit, block size 2/3 | warm-up 4 token | — | — | oltre budget | OOM |
+| Initial native C | 32 tokens, simple prompt | 0.04 tok/s | 0.04 tok/s | RSS 4.18 GB | 920.91 s |
+| Initial native C | arithmetic, 16 tokens | 0.04 tok/s | 0.04 tok/s | RSS 4.04 GB | 1,208.27 s, truncated response |
+| Initial native C | code, 24 tokens | 0.04 tok/s | 0.04 tok/s | RSS 3.97 GB | 1,370.21 s, truncated response |
+| Final MLX serial | 3 prompts × 256 tokens | **7.35 tok/s median** | 7.3–42.5 tok/s | 12.29 GB | stable |
+| Final MLX serial, runtime | 3 prompts × 32 tokens | 5.31 tok/s median | 35.2–41.5 tok/s | 12.29 GB | stable |
+| Warm server | short request | 5.1 tok/s | 23.5 tok/s | 12.09 GB | HTTP 200 |
+| MTP 3-bit, block sizes 2/3 | 4-token warm-up | — | — | over budget | OOM |
 
-Il decode complesso seriale finale varia fra 6,47 e 7,36 token/s: circa **184×** il
-vecchio percorso da 0,04 token/s. Il primo prefill dopo il caricamento è più
-lento per compilazione/warm-up; i successivi sono sensibilmente più veloci. La
-misura finale è stata eseguita dopo la chiusura di Zen e conferma che le app
-aperte influenzano la banda/pressione della memoria unificata.
-I dati grezzi versionabili sono `benchmark-results/qwen38-m4-complex.json`,
-`qwen38-m4-final-smoke.json` e `qwen38-m4-mtp-block2.json`.
+The final complex serial decode varies between 6.47 and 7.36 tok/s: about
+**184×** the old 0.04 tok/s path. The first prefill after loading is slower
+due to compilation/warm-up; the following ones are significantly faster. The
+final measurement was taken after closing Zen and confirms that open apps
+affect the bandwidth/pressure of unified memory.
+The versionable raw data are `benchmark-results/qwen38-m4-complex.json`,
+`qwen38-m4-final-smoke.json` and `qwen38-m4-mtp-block2.json`.
 
-## Qualità sui prompt complessi
+## Quality on complex prompts
 
-La quantizzazione 3-bit è il compromesso che rende possibile il caricamento,
-non una garanzia di qualità equivalente al modello a precisione maggiore.
+3-bit quantization is the compromise that makes loading possible, not a
+guarantee of quality equivalent to a wider-precision model.
 
-- **Matematica:** il modello ha impostato il metodo, ma in modalità no-thinking
-  ha scritto un valore errato per `C(30,6)` ed è arrivato al limite di output.
-  L'oracolo è
+- **Math:** the model set up the method, but in no-thinking mode wrote a
+  wrong value for `C(30,6)` and hit the output limit. The oracle is
   `(C(30,6)-C(18,6)-C(20,6)-C(22,6)+C(8,6)+C(10,6)+C(12,6))/C(30,6)` =
   **18520/23751**.
-- **Python async:** individua correttamente la race check-then-act, ma la
-  soluzione con lock per chiave rimane incompleta rispetto a cancellazione,
-  condivisione del task in-flight e pulizia dei lock.
-- **Italiano tecnico:** la prosa è fluida, ma attribuisce una cache KV troppo
-  grande e tratta l'architettura come Transformer puro, omettendo lo stato
-  ricorrente GDN.
-- **Reasoning medium (prova manuale):** costruisce correttamente
-  l'inclusione-esclusione e si autocorregge sulla mappatura dei colori, ma
-  consuma tutti i 512 token nel blocco di pensiero senza emettere una risposta
-  finale.
+- **Python async:** it correctly identifies the check-then-act race, but the
+  per-key lock solution remains incomplete regarding cancellation, sharing
+  the in-flight task and lock cleanup.
+- **Technical writing:** prose is fluent, but it attributes too large a KV
+  cache and treats the architecture as pure Transformer, omitting the
+  recurrent GDN state.
+- **Reasoning medium (manual trial):** it correctly builds the
+  inclusion-exclusion and self-corrects on the color mapping, but consumes
+  all 512 tokens in the thought block without emitting a final answer.
 
-Conclusione qualitativa: buono per chat, sintesi e coding leggero con verifica
-umana; non va usato come fonte non verificata per calcoli combinatori, stime di
-memoria o concorrenza delicata. Per questi casi servono un budget più ampio,
-prompt più vincolanti e una verifica esterna, oppure un checkpoint meno
-aggressivamente quantizzato su hardware con più memoria.
+Qualitative conclusion: good for chat, summaries and light coding with human
+verification; do not use it as an unverified source for combinatorial
+calculations, memory estimates or delicate concurrency. For those cases you
+need a larger budget, more constrained prompts and external verification, or
+a less aggressively quantized checkpoint on hardware with more memory.
 
-## Verifiche eseguite
+## Verification performed
 
-- `dwarfstar doctor`: hardware, versioni, Metal e dimensione dei due checkpoint OK;
-- 27/27 test Qwen, inclusi golden ChatML, token speciali, whitespace e
-  indentazione Python;
-- compilazione Python e `pip check` senza errori;
-- build e suite legacy C/Metal passate; i soli test che richiedono il vecchio
-  `ds4flash.gguf` vengono saltati esplicitamente quando il file non è presente;
-- generazione reale one-shot, incluso arresto pulito dopo la correzione del
-  teardown;
-- benchmark complesso seriale, benchmark breve sul runtime finale e tre
-  tentativi MTP (block size 2 e 3); MTP-only restituisce correttamente exit 4;
-- smoke seriale sul runtime finale con la nuova soglia MLX e contesto 2K:
-  `DUEMILA OK`, exit 0, 6,86 token/s, 12,07 GB MLX;
-- server reale: `GET /v1/models`, due `POST /v1/chat/completions` sequenziali,
-  alias differenti, risposte `ALFA` e `BETA`, HTTP 200, nessuna contaminazione
-  fra richieste e shutdown pulito; ruolo `developer` normalizzato con risposta
-  `GAMMA`/`OK`; modello remoto arbitrario e `max_tokens: 0` rifiutati con
-  HTTP 400;
-- chat interattiva reale: risposta `CHAT OK`, limite KV inoltrato e `Ctrl-D`
-  pulito con exit 0; secondo processo concorrente rifiutato con exit 2.
+- `dwarfstar doctor`: hardware, versions, Metal and both checkpoint sizes OK;
+- 27/27 Qwen tests, including ChatML goldens, special tokens, whitespace and
+  Python indentation;
+- Python compilation and `pip check` without errors;
+- legacy C/Metal build and suite passed; the only tests requiring the old
+  `ds4flash.gguf` are explicitly skipped when the file is absent;
+- real one-shot generation, including clean shutdown after the teardown fix;
+- complex serial benchmark, short benchmark on the final runtime and three
+  MTP attempts (block sizes 2 and 3); MTP-only correctly returns exit 4;
+- serial smoke on the final runtime with the new MLX threshold and 2K
+  context: `DUEMILA OK`, exit 0, 6.86 tok/s, 12.07 GB MLX;
+- real server: `GET /v1/models`, two sequential `POST /v1/chat/completions`
+  with different aliases, `ALFA` and `BETA` responses, HTTP 200, no
+  cross-request contamination and clean shutdown; `developer` role
+  normalized with `GAMMA`/`OK` response; arbitrary remote model and
+  `max_tokens: 0` rejected with HTTP 400;
+- real interactive chat: `CHAT OK` response, KV limit enforced and clean
+  `Ctrl-D` with exit 0; a second concurrent process rejected with exit 2.
 
-## Addendum — contesto lungo e KV quantizzata (18 agosto 2026)
+## Addendum — long context and quantized KV (August 18, 2026)
 
-La versione 0.3.0 ha introdotto le sessioni con reasoning (`ask`/`chat`).
-Le prove di prefill lungo eseguite sulla stessa macchina hanno mostrato che il
-limite reale non è lo storage della KV cache (solo 16 layer su 64 ne hanno
-una, circa 64 KiB/token in bf16) ma il picco transiente del prefill:
+Version 0.3.0 introduced reasoning sessions (`ask`/`chat`).
+The long-prefill trials run on the same machine showed that the real limit is
+not KV cache storage (only 16 of 64 layers have one, about 64 KiB/token in
+bf16) but the transient prefill peak:
 
-| Prova (prompt reale, retrieval esatto verificato) | Esito |
+| Trial (real prompt, exact retrieval verified) | Result |
 | --- | --- |
-| 3.346 token, ctx 4096, KV bf16, chunk 256 | OOM nel prefill |
-| 3.346 token, ctx 4096, KV bf16, chunk 128 | OOM nel prefill |
-| 3.398 token, ctx 4096, KV 8 bit, chunk 128 | OK: 7,58 tok/s, picco 12,49 GB |
-| 6.986 token, ctx 8192, KV 8 bit, chunk 64 | OOM nel prefill |
-| 7.038 token, ctx 8192, KV 4 bit, chunk 64 | OK: 7,43 tok/s, picco 12,40 GB |
-| Chat 2 turni, default deep (8192/kv4/chunk 64) | OK: 175 token riusati dalla cache, 7,28 tok/s, picco 12,08 GB |
+| 3,346 tokens, ctx 4096, bf16 KV, chunk 256 | OOM in prefill |
+| 3,346 tokens, ctx 4096, bf16 KV, chunk 128 | OOM in prefill |
+| 3,398 tokens, ctx 4096, KV 8-bit, chunk 128 | OK: 7.58 tok/s, peak 12.49 GB |
+| 6,986 tokens, ctx 8192, KV 8-bit, chunk 64 | OOM in prefill |
+| 7,038 tokens, ctx 8192, KV 4-bit, chunk 64 | OK: 7.43 tok/s, peak 12.40 GB |
+| 2-turn chat, deep defaults (8192/kv4/chunk 64) | OK: 175 tokens reused from cache, 7.28 tok/s, peak 12.08 GB |
 
-Politica adottata: limiti di contesto legati alla quantizzazione KV (bf16 →
-2.048; ≥ 6 bit → 4.096; < 6 bit → 8.192; MTP → 1.024), chunk di prefill
-ridotto automaticamente (256/128/64) e `--quantized-kv-start 0` obbligatorio
-quando la KV è quantizzata (il default upstream, token 5000, la renderebbe un
-no-op entro questi limiti). I profili `deep` (8192/kv4, thinking xhigh) e
-`balanced` (4096/kv8, thinking medium) usano solo configurazioni misurate. Il
-checkpoint 2-bit è stato valutato e scartato: libererebbe circa 3,5 GB ma
-degrada proprio la qualità del ragionamento che motiva questo runtime.
+Adopted policy: context caps tied to KV quantization (bf16 → 2,048;
+≥ 6 bits → 4,096; < 6 bits → 8,192; MTP → 1,024), prefill chunk reduced
+automatically (256/128/64) and `--quantized-kv-start 0` mandatory when KV is
+quantized (the upstream default, token 5000, would make it a no-op within
+these caps). The `deep` (8192/kv4, xhigh thinking) and `balanced`
+(4096/kv8, medium thinking) profiles use only measured configurations. The
+2-bit checkpoint was evaluated and rejected: it would free about 3.5 GB but
+degrades exactly the reasoning quality this runtime is built for.
 
-## Limiti residui e uso raccomandato
+## Remaining limits and recommended use
 
-1. Il target è solo testo; immagini, audio e video non sono supportati.
-2. Usare i profili validati: `deep` 8K con KV 4 bit, `balanced` 4K con KV
-   8 bit, `quick` 1K bf16. Senza KV quantizzata il limite è 2K. Il limite
-   teorico 262K del modello non è praticabile su 16 GB.
-3. Lasciare MTP in `auto`/seriale. Anche il minimo block size valido (2, cioè un
-   token draft) va in OOM. Un kernel q3 dedicato o un checkpoint più piccolo
-   resta la strada più promettente.
-4. Non avviare più processi del 27B contemporaneamente e chiudere applicazioni
-   pesanti quando serve il massimo margine.
-5. Verificare sempre le risposte tecniche importanti: gli errori osservati sono
-   del modello/quantizzazione, non del solo renderer.
+1. The target is text-only; images, audio and video are not supported.
+2. Use the validated profiles: `deep` 8K with 4-bit KV, `balanced` 4K with
+   8-bit KV, `quick` 1K bf16. Without quantized KV the cap is 2K. The
+   theoretical 262K context of the model is not practical on 16 GB.
+3. Keep MTP in `auto`/serial. Even the minimum valid block size (2, i.e. one
+   draft token) runs out of memory. A dedicated q3 kernel or a smaller
+   checkpoint remains the most promising path.
+4. Never run multiple 27B processes at the same time and close heavy
+   applications when the maximum margin is needed.
+5. Always verify important technical answers: the observed errors come from
+   the model/quantization, not only from the renderer.
 
-Comandi essenziali:
+Essential commands:
 
 ```sh
 make qwen-setup
@@ -231,24 +225,25 @@ make qwen-doctor
 ./dwarfstar serve --no-mtp --host 127.0.0.1 --port 8080 --max-sequences 1
 ```
 
-## Fonti primarie
+## Primary sources
 
-- modello ufficiale: <https://huggingface.co/Qwen/Qwen3.8-27B/tree/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0>;
-- target 3-bit esatto: <https://huggingface.co/lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly/tree/c98bba5926f51fec1c8d8737e577221673f524d7>;
-- MTP 3-bit esatto: <https://huggingface.co/lukaskremla/Qwen3.8-27B-MTP-3bit-MLX/tree/9d061a0661258e75b401a11ac9fa22fc648e039d>;
+- official model: <https://huggingface.co/Qwen/Qwen3.8-27B/tree/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0>;
+- exact 3-bit target: <https://huggingface.co/lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly/tree/c98bba5926f51fec1c8d8737e577221673f524d7>;
+- exact 3-bit MTP: <https://huggingface.co/lukaskremla/Qwen3.8-27B-MTP-3bit-MLX/tree/9d061a0661258e75b401a11ac9fa22fc648e039d>;
 - MLX-VLM 0.6.14: <https://github.com/Blaizzy/mlx-vlm/releases/tag/v0.6.14>;
-- challenge e snapshot di implementazione studiato:
+- challenge and studied implementation snapshot:
   <https://github.com/Layr-Labs/qwen-3.8-mtp-challenge/tree/8dabcfb75c19dad6cbf5cc7cf9f26e1bd440a0dd>;
-- crown live osservata alle 09:17 UTC del 18 agosto 2026:
+- live crown observed at 09:17 UTC on August 18, 2026:
   <https://github.com/Layr-Labs/qwen-3.8-mtp-challenge/tree/d56b4a0eb4e52f2fb92540ba5c6ed764176e8d33>;
-- leaderboard MLXFast live (può cambiare):
+- live MLXFast leaderboard (can change):
   <https://www.yukon.org/mlxfast>;
-- implementazione Qwen di confronto in llama.cpp:
+- contrasting Qwen implementation in llama.cpp:
   <https://github.com/ggml-org/llama.cpp/blob/82dbc4f017a7b005f993ac2e7af9c048ad686c04/src/models/qwen35.cpp>;
-- base legacy antirez/ds4:
+- legacy antirez/ds4 base:
   <https://github.com/antirez/ds4/tree/84cc882352757baf628a1776badf7cc54d584e28>.
 
-Alle 09:17 UTC del 18 agosto 2026 la crown live mostrava 84,2 token/s median su
-otto sequenze da 512 token. Il dato è ottenuto su M5 Max 128 GB con kernel e
-target 4-bit specializzati e la classifica cambia nel tempo: è un confronto di
-ricerca per scheduling e fusione, non un obiettivo trasferibile al M4 16 GB.
+At 09:17 UTC on August 18, 2026 the live crown showed 84.2 tok/s median on
+eight 512-token sequences. That figure was produced on an M5 Max 128 GB with
+specialized 4-bit kernels and the ranking changes over time: it is a research
+reference for scheduling and fusion, not a target transferable to the
+M4 16 GB.

@@ -21,7 +21,7 @@ make qwen-doctor
 make qwen-bench
 ```
 
-Also exercise Italian outputs, code, math, Unicode, tool calls, long prompts,
+Also exercise code, math, Unicode, tool calls, long prompts,
 OpenAI-compatible server requests (`/v1/models`, `/v1/chat/completions`, alias
 allowlist, `developer` normalization, `max_tokens: 0` rejection) and the
 second-process lock rejection.

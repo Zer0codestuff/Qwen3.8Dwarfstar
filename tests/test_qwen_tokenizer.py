@@ -51,7 +51,7 @@ class QwenTokenizerGoldenTests(unittest.TestCase):
                 {"role": "user", "content": "A"},
                 {
                     "role": "assistant",
-                    "reasoning_content": "controllo A",
+                    "reasoning_content": "check A",
                     "content": "B",
                 },
                 {"role": "user", "content": "C"},
@@ -62,7 +62,7 @@ class QwenTokenizerGoldenTests(unittest.TestCase):
             reasoning_effort="xhigh",
             preserve_thinking=True,
         )
-        self.assertIn("<think>\ncontrollo A\n</think>\n\nB<|im_end|>", rendered)
+        self.assertIn("<think>\ncheck A\n</think>\n\nB<|im_end|>", rendered)
 
     def test_qwen_whitespace_regex(self):
         self.assertEqual(

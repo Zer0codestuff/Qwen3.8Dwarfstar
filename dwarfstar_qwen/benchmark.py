@@ -48,11 +48,11 @@ Assume many tasks can request the same key and cancellation is possible. Include
 the corrected code and keep the whole answer under 180 words.""",
     ),
     (
-        "italian_synthesis",
-        """Scrivi una breve nota tecnica in italiano per decidere se un modello da 27B
-quantizzato a 3 bit sia adatto a un Mac con 16 GB. Distingui memoria dei pesi,
-cache KV, stato ricorrente, buffer temporanei e qualità. Concludi con tre criteri
-misurabili di accettazione, senza slogan. Limite: 170 parole.""",
+        "technical_synthesis",
+        """Write a short technical note deciding whether a 27B model quantized to
+3 bits is suitable for a Mac with 16 GB. Distinguish weight memory, KV cache,
+recurrent state, temporary buffers and quality. Conclude with three measurable
+acceptance criteria, no slogans. Limit: 170 words.""",
     ),
 )
 
