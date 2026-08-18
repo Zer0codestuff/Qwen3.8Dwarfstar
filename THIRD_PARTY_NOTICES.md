@@ -76,13 +76,14 @@ challenge source code is not copied here. Challenge model weights are not includ
 Leaderboard throughput was measured on M5 Max 128 GB hardware and is not a
 performance claim for this 16 GB M4 build.
 
-## DwarfStar, llama.cpp and GGML legacy code
+## Historical derivation
 
-The native C/Metal code descends from
-[antirez/ds4 at `84cc882`](https://github.com/antirez/ds4/tree/84cc882352757baf628a1776badf7cc54d584e28) and retains source and ideas from
-[llama.cpp/GGML](https://github.com/ggml-org/llama.cpp), under their applicable
-MIT notices. See the repository [LICENSE](LICENSE) and source headers for the
-legacy code's complete attribution.
+This project was originally derived from
+[antirez/ds4 at `84cc882`](https://github.com/antirez/ds4/tree/84cc882352757baf628a1776badf7cc54d584e28),
+which in turn drew from [llama.cpp/GGML](https://github.com/ggml-org/llama.cpp).
+The legacy C/Metal, CUDA and ROCm engine has been removed from this
+repository; the current runtime is a Python wrapper around MLX and MLX-VLM.
+See the repository [LICENSE](LICENSE) for the applicable MIT terms.
 
 ## MIT license text
 

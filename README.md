@@ -1,10 +1,10 @@
 # DwarfStar Qwen
 
 Inference locale di **Qwen 3.8 27B** ottimizzata per Mac Apple Silicon con
-**16 GB di memoria unificata**. Il percorso principale usa MLX e MLX-VLM con
-un checkpoint text-only 3-bit; il precedente engine C/Metal derivato da
-[`antirez/ds4`](https://github.com/antirez/ds4) resta nel repository come
-implementazione legacy e riferimento sperimentale.
+**16 GB di memoria unificata**. Il runtime usa MLX e MLX-VLM con un checkpoint
+text-only 3-bit. Il progetto deriva storicamente da
+[`antirez/ds4`](https://github.com/antirez/ds4) ma il engine C/Metal originale
+non è più incluso in questo repository.
 
 > Stato: beta. Il modello entra in 16 GB solo con margini stretti. Il profilo
 > low-memory, il limite di contesto e la singola sessione sono requisiti di
@@ -293,28 +293,6 @@ prompt lunghi. Il 3-bit è il più grande checkpoint affine uniforme validato
 qui che rientra nel profilo, ma può perdere qualità rispetto a quantizzazioni
 più grandi.
 
-## Engine C/Metal legacy
-
-I file `ds4*.c`, `ds4_metal.m`, `metal/`, `cuda/` e `rocm/` appartengono al
-progetto nativo originale. Sono conservati per compatibilità, studio e futuri
-port Metal diretti. Il percorso Qwen in quel codice è un riferimento CPU
-sperimentale: non è il backend Qwen raccomandato su questo Mac.
-
-I target legacy restano invariati:
-
-```sh
-make all             # build C/Metal legacy su macOS
-make cpu             # build CPU diagnostica
-make cuda-spark      # CUDA per DGX Spark
-make cuda-generic    # CUDA generica
-make strix-halo      # ROCm per Strix Halo
-make test            # suite legacy
-make help            # elenco completo
-```
-
-Il nuovo percorso MLX non modifica il formato GGUF né promette compatibilità
-con i modelli DeepSeek/GLM supportati dal vecchio engine.
-
 ## Riconoscimenti e licenze
 
 Il progetto deriva dall'engine [antirez/ds4](https://github.com/antirez/ds4)
@@ -330,8 +308,7 @@ modello upstream. Vedi [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) e
 ## English quick start
 
 DwarfStar Qwen runs the **text-only Qwen 3.8 27B 3-bit MLX checkpoint** on a
-16 GB Apple Silicon Mac. The MLX wrapper is the primary path. The older native
-C/Metal ds4 engine remains available as a legacy, experimental reference.
+16 GB Apple Silicon Mac. The MLX/MLX-VLM wrapper is the only runtime.
 
 ```sh
 make qwen-setup
@@ -373,5 +350,5 @@ Default model revisions are immutable:
   `9d061a0661258e75b401a11ac9fa22fc648e039d`.
 
 This build is text-only and does not accept images, audio or video. See the
-Italian sections above for memory accounting, MTP caveats, environment
-variables and the legacy native build commands.
+Italian sections above for memory accounting, MTP caveats and environment
+variables.

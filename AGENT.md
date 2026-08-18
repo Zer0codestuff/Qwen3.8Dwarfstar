@@ -1,17 +1,12 @@
 # Agent Notes
 
-DwarfStar Qwen is a fork of [`antirez/ds4`](https://github.com/antirez/ds4)
-(a native C/Metal inference engine for DeepSeek V4 Flash) re-targeted to run
-**Qwen 3.8 27B on a 16 GB Apple Silicon Mac**. The supported production path is
-a small Python wrapper around MLX and MLX-VLM with a memory profile engineered
+DwarfStar Qwen runs **Qwen 3.8 27B on a 16 GB Apple Silicon Mac** through a
+small Python wrapper around MLX and MLX-VLM with a memory profile engineered
 so the 27B checkpoint stays resident in the Metal working set of an M4 16 GB
-machine. The original native C/Metal, CUDA and ROCm engine is preserved in the
-tree as a legacy experimental reference and future base for direct Metal ports.
-
-Do not treat the legacy engine as a candidate Qwen backend: its native Qwen
-path streams weights from disk at about 0.04 tok/s and the Q3_K_M GGUF
-(13.8 GB) does not fit the 12.7 GB working set. The shipped, validated result
-is the MLX wrapper.
+machine. The project was originally derived from
+[`antirez/ds4`](https://github.com/antirez/ds4) (a native C/Metal inference
+engine for DeepSeek V4 Flash) but the legacy C/Metal, CUDA and ROCm engine
+has been removed from this repository. The MLX wrapper is the only runtime.
 
 ## Target hardware and baseline
 
@@ -50,8 +45,6 @@ is the MLX wrapper.
   to immutable snapshot directories with weight sizes verified.
 - Keep the model text-only: the vision tower was removed from the checkpoint
   to make it fit; image, audio and video input are unsupported.
-- Keep the legacy C/Metal, CUDA and ROCm engine buildable and regression-tested
-  as an independent track, without regressing it while changing the Qwen path.
 - Preserve correctness before speed. Logits, KV and tokenizer behavior must
   not drift without a documented reason and a measured check.
 
@@ -135,8 +128,6 @@ with no slop, elegant minimal designs, instructive comments beside the code.
 - Keep memory-related decisions explicit in code and comments: why a context
   cap, cache limit or unfused path exists, and what it costs. Do not add flags
   that silently relax safety.
-- Do not add C++ to the legacy engine, and do not rewrite working C into
-  Python. Legacy engine changes use the legacy testing rules.
 - Do not add "improvements" that contradict AUDIT_QWEN38.md without a new
   measured validation on the 16 GB machine.
 
@@ -146,9 +137,6 @@ with no slop, elegant minimal designs, instructive comments beside the code.
   applications before long sessions: RAM and bandwidth are unified, so a thin
   ~400 MB margin shrinks with any background load.
 - Never use the unsafe context/sequence overrides in normal use.
-- The legacy CPU backend is reference-only and must not run large inference on
-  macOS (known kernel VM failures with very large mappings; and at 0.04 tok/s
-  it serves no purpose).
 
 ## Layout
 
@@ -193,27 +181,18 @@ Supporting files:
 - `scripts/setup-qwen-macos.sh` — creates `.venv` and installs the pinned
   dependencies; `scripts/install-qwen-command.sh` — symlinks `dwarfstar` into
   `~/.local/bin`.
-- `scripts/verify-qwen.sh`, `scripts/baseline-llamacpp.sh`,
-  `scripts/run-qwen-prompts.py`, `scripts/inspect-qwen-gguf.py` — audit probes
-  against the legacy C engine and a llama.cpp baseline (unsloth Q3_K_M GGUF);
-  they document why the native path was abandoned, they are not part of the
-  supported runtime.
+- `scripts/baseline-llamacpp.sh`, `scripts/inspect-qwen-gguf.py` — optional
+  audit probes against a llama.cpp baseline (unsloth Q3_K_M GGUF); they are not
+  part of the supported runtime.
 - `tests/test_qwen_cli.py` — unit tests without model inference;
   `tests/test_qwen_tokenizer.py` — tokenizer/template goldens (skipped when
   the pinned checkpoint is not cached).
-- `Makefile` — the `qwen-*` targets are primary (`qwen-help` is the default
-  goal). The legacy targets (`all`, `cpu`, `cuda-spark`, `cuda-generic`,
-  `strix-halo`, `test`, ...) are unchanged and independent.
-
-Legacy native engine preserved from upstream ds4: `ds4*.c/.m/.cu/.h`,
-`metal/`, `cuda/`, `rocm/`, `linenoise.c`, `rax.c`, `gguf-tools/`,
-`speed-bench/`, the C `tests/` and `download_model.sh` (DeepSeek/GLM GGUFs).
+- `Makefile` — the `qwen-*` targets are the only targets (`qwen-help` is the
+  default goal).
 
 Docs: `README.md` is the user-facing entry (mostly Italian with an English
 quick start), `AUDIT_QWEN38.md` is the authoritative Qwen audit with measured
-numbers, `THIRD_PARTY_NOTICES.md` lists licensing. `MODEL_CARD.md`,
-`STRIXHALO.md` and `QA_BEFORE_RELEASES.md` describe the legacy DeepSeek/ROCm
-engine and its release gates, not the Qwen path.
+numbers, `THIRD_PARTY_NOTICES.md` lists licensing.
 
 ## Build and commands
 
@@ -229,9 +208,6 @@ make qwen-test           # Python unit tests without loading the model
 
 Extra options pass through `QWEN_*_ARGS`, for example
 `make qwen-bench QWEN_BENCH_ARGS='--mode both --max-tokens 64 --repeats 2'`.
-Legacy builds: `make all` (Metal), `make cpu` (reference), `make cuda-spark` /
-`make cuda-generic` (CUDA), `make strix-halo` (ROCm) and `make test` (legacy
-suite).
 
 ## Testing
 
@@ -249,9 +225,6 @@ suite).
 - Anything touching the memory profile, the GDN patch, context caps or worker
   teardown needs an audit-level re-validation on the M4 16 GB machine (peaks,
   serial decode, MTP attempt) before it is considered done.
-- Legacy engine changes follow the legacy rules in the Makefile and
-  `QA_BEFORE_RELEASES.md`; CUDA/ROCm hosts are remote and require explicit
-  user permission to test on.
 
 ## Pinned revisions and versions
 
