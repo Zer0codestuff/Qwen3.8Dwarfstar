@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PYTHON="$ROOT/.venv/bin/python"
+
+if [ ! -x "$PYTHON" ]; then
+    echo "DwarfStar Qwen is not installed. Run: make qwen-setup" >&2
+    exit 2
+fi
+
+exec "$PYTHON" -m dwarfstar_qwen.cli "$@"

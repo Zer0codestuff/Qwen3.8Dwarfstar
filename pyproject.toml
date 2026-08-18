@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dwarfstar-qwen"
+version = "0.2.0"
+description = "Memory-aware Qwen 3.8 27B inference for 16 GB Apple Silicon Macs"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "huggingface-hub==1.27.0",
+    "mlx==0.32.1",
+    "mlx-vlm==0.6.14",
+    "transformers==5.15.0",
+    "tokenizers==0.22.2",
+]
+
+[project.scripts]
+dwarfstar = "dwarfstar_qwen.cli:console_main"
+
+[tool.setuptools.packages.find]
+include = ["dwarfstar_qwen*"]
