@@ -1,0 +1,114 @@
+{
+  "schema": 1,
+  "created_at": "2026-08-18T09:12:06.122918+00:00",
+  "hardware": {
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "chip": "Apple M4",
+    "memory_bytes": 17179869184,
+    "metal": {
+      "device_name": "Apple M4",
+      "max_recommended_working_set_size": 12713115648,
+      "memory_size": 17179869184,
+      "architecture": "applegpu_g16g",
+      "max_buffer_length": 9534832640,
+      "resource_limit": 499000
+    }
+  },
+  "software": {
+    "mlx": "0.32.1",
+    "mlx-vlm": "0.6.14",
+    "transformers": "5.15.0",
+    "tokenizers": "0.22.2"
+  },
+  "configuration": {
+    "model": "lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly",
+    "model_revision": "c98bba5926f51fec1c8d8737e577221673f524d7",
+    "mtp_model": "lukaskremla/Qwen3.8-27B-MTP-3bit-MLX",
+    "mtp_revision": "9d061a0661258e75b401a11ac9fa22fc648e039d",
+    "mode": "serial",
+    "max_tokens": 32,
+    "repeats": 1,
+    "context_size": 1024,
+    "prefill_step_size": 256,
+    "mtp_block_size": 3,
+    "thinking": "disabled",
+    "temperature": 0.0
+  },
+  "summary": {
+    "schema": 1,
+    "created_at": "2026-08-18T09:12:06.122918+00:00",
+    "target_revision": "c98bba5926f51fec1c8d8737e577221673f524d7",
+    "mtp_revision": "9d061a0661258e75b401a11ac9fa22fc648e039d",
+    "recommended_backend": "serial",
+    "parity_ok": null,
+    "memory_safe": null,
+    "serial_median_generation_tps": 5.314341169378938,
+    "mtp_median_generation_tps": null,
+    "mtp_speedup": null,
+    "mtp_block_size": 3,
+    "backend_errors": {},
+    "runtime_fingerprint": {
+      "machine": "arm64",
+      "device_name": "Apple M4",
+      "device_architecture": "applegpu_g16g",
+      "recommended_working_set_bytes": 12713115648,
+      "versions": {
+        "mlx": "0.32.1",
+        "mlx-vlm": "0.6.14",
+        "transformers": "5.15.0",
+        "tokenizers": "0.22.2"
+      },
+      "context_size": 1024,
+      "prefill_step_size": 256,
+      "mtp_block_size": 3
+    },
+    "mismatches": []
+  },
+  "trials": [
+    {
+      "prompt": "reasoning",
+      "mode": "serial",
+      "repeat": 0,
+      "prompt_tokens": 90,
+      "generated_tokens": 32,
+      "prompt_tps": 41.515652672839366,
+      "generation_tps": 5.304231703224237,
+      "elapsed_seconds": 8.239099833999717,
+      "peak_memory_gb": 12.256111756,
+      "finish_reason": "length",
+      "text": "Define $DP(r, b, g, k)$ as the number of ways to draw $k$ balls with exactly $r$ red, $b$",
+      "accepted_draft_tokens": null,
+      "proposed_draft_tokens": null
+    },
+    {
+      "prompt": "code",
+      "mode": "serial",
+      "repeat": 0,
+      "prompt_tokens": 104,
+      "generated_tokens": 32,
+      "prompt_tps": 37.92457289127661,
+      "generation_tps": 5.314341169378938,
+      "elapsed_seconds": 8.800185957999929,
+      "peak_memory_gb": 12.294535172,
+      "finish_reason": "length",
+      "text": "**Bug:** Race condition. Multiple concurrent tasks checking `key not in cache` before any task completes `expensive_fetch` will all see `False`, triggering",
+      "accepted_draft_tokens": null,
+      "proposed_draft_tokens": null
+    },
+    {
+      "prompt": "italian_synthesis",
+      "mode": "serial",
+      "repeat": 0,
+      "prompt_tokens": 97,
+      "generated_tokens": 32,
+      "prompt_tps": 35.201178202745666,
+      "generation_tps": 5.355221947996087,
+      "elapsed_seconds": 8.77074249999896,
+      "peak_memory_gb": 12.27314435,
+      "finish_reason": "length",
+      "text": "**Nota tecnica: Valutazione 27B 3-bit su Mac 16GB**\n\nL'adattamento di un modello da 2",
+      "accepted_draft_tokens": null,
+      "proposed_draft_tokens": null
+    }
+  ]
+}
